@@ -1,6 +1,6 @@
 # git-replicator
 
-A CLI tool for replicate the git state from one repository to another one.
+A CLI tool for git state replication from one repository to another one.
 
 ## Installation
 
