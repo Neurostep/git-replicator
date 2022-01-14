@@ -22,8 +22,21 @@ import (
 )
 
 const (
+	defaultTimeout = time.Second * 10
+
 	defaultEditor          = "vi"
 	defaultNumberOfCommits = 5
+
+	pickCommit = "pick"
+	dropCommit = "drop"
+
+	yesAnswer = "yes"
+	noAnswer  = "no"
+
+	usage = `usage: %s <optional url>
+
+Options:
+`
 )
 
 type (
@@ -35,6 +48,10 @@ type (
 
 func main() {
 	rootFlagSet := flag.NewFlagSet("git-replicator", flag.ExitOnError)
+	rootFlagSet.Usage = func() {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), usage, os.Args[0])
+		rootFlagSet.PrintDefaults()
+	}
 
 	var (
 		commitsNumber                 int
@@ -52,6 +69,7 @@ func main() {
 	argsLen := len(args)
 
 	if argsLen == 0 && localRepo == "" {
+		rootFlagSet.Usage()
 		log.Fatal("no repository specified")
 	}
 
@@ -67,10 +85,9 @@ func main() {
 	repoURL := stringURL
 
 	token := os.Getenv("GIT_AUTH_TOKEN")
-
 	if urlParts.Host == githubHost && strings.Contains(urlParts.Path, githubPullsPath) {
 		if token == "" {
-			log.Fatal("Github access token is empty")
+			log.Fatal("Github access token is empty, you can set it via GIT_AUTH_TOKEN environment variable")
 		}
 
 		gh := NewGithub(token)
@@ -123,11 +140,11 @@ func main() {
 			assertFatalError(err)
 		}
 
-		cloneCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+		cloneCtx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
 
 		if token == "" {
-			log.Fatal("Github access token is empty")
+			log.Fatal("Github access token is empty, you can set it via GIT_AUTH_TOKEN environment variable")
 		}
 
 		r, err = git.PlainCloneContext(cloneCtx, repoPath, false, &git.CloneOptions{
@@ -139,7 +156,7 @@ func main() {
 		})
 		assertFatalError(err)
 
-		fetchContext, fetchCancel := context.WithTimeout(context.Background(), time.Second*10)
+		fetchContext, fetchCancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer fetchCancel()
 
 		err = r.FetchContext(fetchContext, &git.FetchOptions{
@@ -172,100 +189,44 @@ func main() {
 	assertFatalError(err)
 	defer os.Remove(commitsToPickTmp.Name())
 
-	var commitsAdded int
-
-	var prevCommit *object.Commit
-	var prevTree *object.Tree
-	for {
-		if commitsAdded == commitsNumber {
-			break
+	commitsAdded, err := CommitsWalk(localCommits, func(prev, next *object.Commit, patch *object.Patch, i int) error {
+		commitMessageCut := strings.Split(strings.ReplaceAll(prev.Message, "\r\n", "\n"), "\n")[0]
+		_, err := commitsToPickTmp.WriteString(fmt.Sprintf("%s %s %s\n", pickCommit, prev.Hash, commitMessageCut))
+		if err != nil {
+			return err
 		}
 
-		commit, err := localCommits.Next()
-		if commit == nil {
-			commitMessageCut := strings.Split(strings.ReplaceAll(prevCommit.Message, "\r\n", "\n"), "\n")[0]
-			_, err = commitsToPickTmp.WriteString(fmt.Sprintf("pick %s %s\n", prevCommit.Hash, commitMessageCut))
-			assertFatalError(err)
-
-			patchName := filepath.Join(wd, fmt.Sprintf("%s.patch", prevCommit.Hash))
-			p := patchToApply{
-				Name: patchName,
-			}
-			file, err := os.Create(patchName)
-			assertFatalError(err)
-
-			patch, err := prevCommit.Patch(nil)
-			assertFatalError(err)
-
-			err = patch.Encode(file)
-			assertFatalError(err)
-
-			for _, fp := range patch.FilePatches() {
-				from, to := fp.Files()
-
-				if from != nil {
-					p.Files = append(p.Files, from.Path())
-				}
-				if to != nil {
-					p.Files = append(p.Files, to.Path())
-				}
-			}
-			filePatches[commitsNumber-commitsAdded-1] = p
-			commits[commitsNumber-commitsAdded-1] = prevCommit
-			commitsAdded = commitsAdded + 1
-
-			err = file.Close()
-			assertFatalError(err)
-
-			break
-		}
-		assertFatalError(err)
-
-		tree, err := commit.Tree()
-		assertFatalError(err)
-
-		if prevCommit == nil {
-			prevCommit = commit
-			prevTree = tree
-			continue
-		}
-
-		commitMessageCut := strings.Split(strings.ReplaceAll(prevCommit.Message, "\r\n", "\n"), "\n")[0]
-		_, err = commitsToPickTmp.WriteString(fmt.Sprintf("pick %s %s\n", prevCommit.Hash, commitMessageCut))
-		assertFatalError(err)
-
-		changes, err := tree.Diff(prevTree)
-		assertFatalError(err)
-
-		patchName := filepath.Join(wd, fmt.Sprintf("%s.patch", prevCommit.Hash))
+		patchName := filepath.Join(wd, fmt.Sprintf("%s.patch", prev.Hash))
 		p := patchToApply{
 			Name: patchName,
 		}
 		file, err := os.Create(patchName)
-		assertFatalError(err)
+		if err != nil {
+			return err
+		}
 
-		for _, c := range changes {
-			patch, err := c.Patch()
-			assertFatalError(err)
+		err = patch.Encode(file)
+		if err != nil {
+			return err
+		}
 
-			err = patch.Encode(file)
-			assertFatalError(err)
-
-			for _, fp := range patch.FilePatches() {
-				_, f := fp.Files()
-				p.Files = append(p.Files, f.Path())
+		for _, fp := range patch.FilePatches() {
+			from, to := fp.Files()
+			if from != nil {
+				p.Files = append(p.Files, from.Path())
+			}
+			if to != nil {
+				p.Files = append(p.Files, to.Path())
 			}
 		}
-		filePatches[commitsNumber-commitsAdded-1] = p
-		commits[commitsNumber-commitsAdded-1] = prevCommit
-		commitsAdded = commitsAdded + 1
 
-		err = file.Close()
-		assertFatalError(err)
+		filePatches[commitsNumber-i-1] = p
+		commits[commitsNumber-i-1] = prev
 
-		prevCommit = commit
-		prevTree = tree
-	}
+		return file.Close()
+	}, commitsNumber)
+
+	assertFatalError(err)
 
 	_, err = commitsToPickTmp.WriteString(_message)
 	assertFatalError(err)
@@ -279,37 +240,12 @@ func main() {
 	fmt.Printf("We are about to replicate %d commits, proceed? yes / no? ", commitsAdded)
 
 	s := readUserInput()
-	if s == "no" {
+	if s == noAnswer {
 		err := editFile(commitsToPickTmp.Name())
 		assertFatalError(err)
 	}
 
-	file, err := os.Open(commitsToPickTmp.Name())
-	assertFatalError(err)
-
-	scanner := bufio.NewScanner(file)
-	commitsMap := make(map[string]bool)
-
-	for scanner.Scan() {
-		text := scanner.Text()
-		textSlice := strings.Split(text, " ")
-
-		fmt.Println(text)
-
-		action := textSlice[0]
-		if action != "pick" && action != "drop" {
-			break
-		}
-
-		var toPick bool
-		if action == "pick" {
-			toPick = true
-		}
-
-		commitHash := textSlice[1]
-		commitsMap[commitHash] = toPick
-	}
-	err = file.Close()
+	commitsMap, err := parseCommitsFile(commitsToPickTmp.Name())
 	assertFatalError(err)
 
 	filePatches = filePatches[(commitsNumber - commitsAdded):commitsNumber]
@@ -328,7 +264,7 @@ func main() {
 			fmt.Printf("commit %s failed to apply, edit patch file? yes / no ? ", commit.Hash.String())
 			s := readUserInput()
 
-			if s == "yes" {
+			if s == yesAnswer {
 				err := editFile(filePatches[i].Name)
 				assertFatalError(err)
 
@@ -355,6 +291,8 @@ func main() {
 
 		teardown()
 	}
+
+	os.Exit(0)
 }
 
 func homeDir() (home string, err error) {
@@ -416,4 +354,36 @@ func editFile(path string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+func parseCommitsFile(filePath string) (map[string]bool, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	scanner := bufio.NewScanner(file)
+	commitsMap := make(map[string]bool)
+
+	for scanner.Scan() {
+		text := scanner.Text()
+		textSlice := strings.Split(text, " ")
+
+		fmt.Println(text)
+
+		action := textSlice[0]
+		if action != pickCommit && action != dropCommit {
+			break
+		}
+
+		var toPick bool
+		if action == pickCommit {
+			toPick = true
+		}
+
+		commitHash := textSlice[1]
+		commitsMap[commitHash] = toPick
+	}
+	err = file.Close()
+	return commitsMap, err
 }

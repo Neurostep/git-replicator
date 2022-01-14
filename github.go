@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	defaultGithubTimeout = time.Second * 10
+
 	githubHost      = "github.com"
 	githubPullsPath = "pull"
 )
@@ -55,7 +57,7 @@ func (g *Github) GetPullRequestData(prURL string) (*PullRequestData, error) {
 		return nil, fmt.Errorf("pull request number is not numeric: %s", pullNumberString)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGithubTimeout)
 	defer cancel()
 
 	pr, _, err := g.client.PullRequests.Get(ctx, pathParts[1], pathParts[2], pullNumber)
