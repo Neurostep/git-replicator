@@ -212,7 +212,7 @@ func main() {
 
 		for _, fp := range patch.FilePatches() {
 			from, to := fp.Files()
-			if from != nil {
+			if to == nil && from != nil {
 				p.Files = append(p.Files, from.Path())
 			}
 			if to != nil {
