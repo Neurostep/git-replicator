@@ -161,6 +161,10 @@ func main() {
 
 		err = r.FetchContext(fetchContext, &git.FetchOptions{
 			RemoteName: remote,
+			Auth: &http.BasicAuth{
+				Username: "test", // yes, it can be anything :)
+				Password: token,
+			},
 			RefSpecs:   []config.RefSpec{"refs/*:refs/*"},
 		})
 		assertFatalError(err)
