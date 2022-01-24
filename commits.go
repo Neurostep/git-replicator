@@ -39,7 +39,7 @@ func CommitsWalk(commits object.CommitIter, fn func(prev, next *object.Commit, p
 			continue
 		}
 
-		patch, err := prevCommit.Patch(commit)
+		patch, err := commit.Patch(prevCommit)
 		if err != nil {
 			return commitsProcessed, err
 		}
