@@ -273,9 +273,10 @@ func main() {
 					teardown()
 					continue
 				}
+			} else {
+				teardown()
+				continue
 			}
-			teardown()
-			continue
 		}
 
 		for _, f := range filePatches[i].Files {
