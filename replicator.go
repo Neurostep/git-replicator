@@ -165,7 +165,7 @@ func main() {
 				Username: "test", // yes, it can be anything :)
 				Password: token,
 			},
-			RefSpecs:   []config.RefSpec{"refs/*:refs/*"},
+			RefSpecs: []config.RefSpec{"refs/*:refs/*"},
 		})
 		assertFatalError(err)
 	} else {
@@ -259,28 +259,30 @@ func main() {
 			assertFatalError(err)
 		}
 
+		applyAndEditPatch := func() error {
+			for {
+				if err := applyPatch(filePatches[i].Name); err != nil {
+					fmt.Printf("commit %s failed to apply, edit patch file? yes / no ? ", commit.Hash.String())
+					s := readUserInput()
+
+					if s != yesAnswer {
+						return err
+					}
+					err := editFile(filePatches[i].Name)
+					assertFatalError(err)
+				}
+			}
+		}
+
 		if !commitsMap[commit.Hash.String()] {
 			teardown()
 			continue
 		}
 
-		if err := applyPatch(filePatches[i].Name); err != nil {
-			fmt.Printf("commit %s failed to apply, edit patch file? yes / no ? ", commit.Hash.String())
-			s := readUserInput()
-
-			if s == yesAnswer {
-				err := editFile(filePatches[i].Name)
-				assertFatalError(err)
-
-				if err := applyPatch(filePatches[i].Name); err != nil {
-					fmt.Printf("error occured during git apply %s\n", err)
-					teardown()
-					continue
-				}
-			} else {
-				teardown()
-				continue
-			}
+		err := applyAndEditPatch()
+		if err != nil {
+			teardown()
+			continue
 		}
 
 		for _, f := range filePatches[i].Files {
