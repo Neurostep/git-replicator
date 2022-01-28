@@ -270,7 +270,11 @@ func main() {
 					}
 					err := editFile(filePatches[i].Name)
 					assertFatalError(err)
+
+					continue
 				}
+
+				return nil
 			}
 		}
 
